@@ -113,6 +113,8 @@ The Home screen is the main entry point to the firmware. From here you can navig
 
 When saved reading progress is available, Lyra shows the percentage and a progress bar below the book title and author.
 
+To display a custom owner or user name in the top bar on the Home screen, place a plain text file named `owner.txt` in the root of the SD card (or in `/.crosspoint/owner.txt`) containing the name (up to 31 characters, UTF-8).
+
 ### 3.2 Reading Mode
 
 See [Reading Mode](#4-reading-mode) below for more information.

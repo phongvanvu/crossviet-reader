@@ -230,9 +230,58 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = false;
 }
 
+void HomeActivity::loadOwnerName() {
+  ownerName[0] = '\0';
+  HalFile file;
+  if (Storage.openFileForRead("HOME", "/owner.txt", file) ||
+      Storage.openFileForRead("HOME", "/.crosspoint/owner.txt", file)) {
+    const int bytesRead = file.read(reinterpret_cast<uint8_t*>(ownerName), sizeof(ownerName) - 1);
+    file.close();
+    if (bytesRead > 0) {
+      int len = bytesRead;
+      ownerName[len] = '\0';
+      // Strip UTF-8 BOM if present
+      if (len >= 3 && static_cast<uint8_t>(ownerName[0]) == 0xEF && static_cast<uint8_t>(ownerName[1]) == 0xBB &&
+          static_cast<uint8_t>(ownerName[2]) == 0xBF) {
+        memmove(ownerName, ownerName + 3, len - 3 + 1);
+        len -= 3;
+      }
+      // Trim leading whitespace and newlines
+      int start = 0;
+      while (start < len && (ownerName[start] == ' ' || ownerName[start] == '\t' || ownerName[start] == '\r' ||
+                             ownerName[start] == '\n')) {
+        start++;
+      }
+      if (start > 0) {
+        memmove(ownerName, ownerName + start, len - start + 1);
+        len -= start;
+      }
+      // Stop at first newline so multi-line text does not corrupt the single-line header
+      for (int i = 0; i < len; ++i) {
+        if (ownerName[i] == '\r' || ownerName[i] == '\n') {
+          ownerName[i] = '\0';
+          len = i;
+          break;
+        }
+      }
+      // Trim trailing whitespace
+      while (len > 0 && (ownerName[len - 1] == ' ' || ownerName[len - 1] == '\t')) {
+        len--;
+      }
+      ownerName[len] = '\0';
+      // Ensure safe UTF-8 boundary in case the read split a multi-byte sequence
+      len = utf8SafeTruncateBuffer(ownerName, len);
+      ownerName[len] = '\0';
+      // In-place NFC composition (precomposes diacritics for macOS NFD text)
+      utf8ComposeNfcInPlace(ownerName);
+    }
+  }
+}
+
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
+  loadOwnerName();
   hasOpdsServers = OPDS_STORE.hasServers();
   // Plugin System is the global opt-in. Once enabled, expose the Plugins entry
   // even when no SD plugins are installed yet so Plugin Hub can be installed
@@ -536,9 +585,11 @@ void HomeActivity::render(RenderLock&&) {
   // homeTopPadding, so the height must shrink by topPadding or the band (and a
   // centered title, e.g. RoundedRaff's book title) sinks into the tile.
   // Home is the stack root: no back button in its header.
+  BaseTheme::setHomeStatusPrefix(ownerName[0] != '\0' ? ownerName : nullptr);
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding - metrics.topPadding},
                  metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr,
                  nullptr, false);
+  BaseTheme::setHomeStatusPrefix(nullptr);
 
   // Record the tile rect so storeCoverBuffer (called from the theme) knows
   // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait

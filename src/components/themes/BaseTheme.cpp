@@ -324,6 +324,12 @@ int headerBandTopShift() { return BaseTheme::HEADER_STATUS_TOP - UITheme::getIns
 
 int BaseTheme::headerStatusInset() { return HEADER_STATUS_EDGE_INSET; }
 
+namespace {
+const char* s_homeStatusPrefix = nullptr;
+}  // namespace
+
+void BaseTheme::setHomeStatusPrefix(const char* prefix) { s_homeStatusPrefix = prefix; }
+
 void BaseTheme::applyHeaderStatus(const GfxRenderer& renderer, freeink::ui::HeaderProps& props) {
   const ThemeMetrics& metrics = UITheme::getInstance().getMetrics();
   auto& status = props.status;
@@ -434,6 +440,15 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   // Battery + clock chrome and their title reserves live in the FreeInkUI
   // header component; this only fills the values from settings and metrics.
   applyHeaderStatus(renderer, props);
+  static char combinedStatus[48];
+  if (s_homeStatusPrefix != nullptr && s_homeStatusPrefix[0] != '\0') {
+    if (props.status.clockText != nullptr && props.status.clockText[0] != '\0') {
+      snprintf(combinedStatus, sizeof(combinedStatus), "%s  %s", s_homeStatusPrefix, props.status.clockText);
+      props.status.clockText = combinedStatus;
+    } else {
+      props.status.clockText = s_homeStatusPrefix;
+    }
+  }
   // Callers pass a full-width header rect; headerBand fits it to the board's bezel.
   const fui::Rect band = headerBand(renderer,
                                     fui::Rect{static_cast<int16_t>(rect.x), static_cast<int16_t>(rect.y),

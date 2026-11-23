@@ -267,6 +267,8 @@ class BaseTheme {
   // drawHeader). The label strings point at internal static buffers refreshed
   // per call (headers draw on the single render task).
   static void applyHeaderStatus(const GfxRenderer& renderer, freeink::ui::HeaderProps& props);
+  // Set temporary custom prefix for the home screen status line (e.g. owner name).
+  static void setHomeStatusPrefix(const char* prefix);
   // The header band every screen draws in: the caller's full-width rect inset
   // by the board's side insets, its top edge lowered by the board's
   // headerOffsetY (bottom edge fixed, so content below keeps its boundary).
