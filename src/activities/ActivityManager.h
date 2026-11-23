@@ -1,5 +1,21 @@
 #pragma once
 
+// ============================================================================
+// CrossPoint Reader — Quản Lý Vòng Đời Hoạt Cảnh (Activity Manager)
+//
+// [MÔ TẢ KIẾN TRÚC BẰNG TIẾNG VIỆT]
+// ActivityManager là bộ điều phối trung tâm quản lý toàn bộ các màn hình (Activity) của firmware:
+// 1. Quản lý ngăn xếp (Activity Stack):
+//    - Đảm bảo tại một thời điểm chỉ có DUY NHẤT một màn hình hoạt động (currentActivity) để
+//      tiết kiệm tối đa bộ nhớ RAM trên ESP32-C3 (~380 KB khả dụng).
+//    - Cho phép mở màn hình con (ví dụ: từ WebServer mở WifiSelect) và nhận kết quả trả về
+//      thông qua `ActivityResultHandler` khi màn hình con đóng lại.
+// 2. Tách biệt luồng xử lý và luồng vẽ E-Ink (FreeRTOS Render Task):
+//    - Hoạt động vẽ màn hình E-Ink tốn nhiều mili-giây đến vài giây, vì vậy được chuyển sang
+//      một FreeRTOS task riêng biệt (`renderTaskLoop`), đồng bộ thông qua khóa `RenderLock`.
+//    - Giúp vòng lặp giao diện chính không bị đơ giật khi màn hình đang làm mới.
+// ============================================================================
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>

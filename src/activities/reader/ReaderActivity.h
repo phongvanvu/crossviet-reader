@@ -1,5 +1,19 @@
 #pragma once
 
+// ============================================================================
+// CrossPoint Reader — Lớp Cơ Sở Màn Hình Đọc Sách (Reader Activity Base)
+//
+// [MÔ TẢ KIẾN TRÚC BẰNG TIẾNG VIỆT]
+// ReaderActivity là lớp cơ sở quan trọng nhất của firmware, quản lý trải nghiệm đọc sách cốt lõi:
+// 1. Đa định dạng: Được kế thừa bởi EpubReaderActivity (EPUB 2/3), XtcReaderActivity (XTC/TXT).
+// 2. Tối ưu hiển thị E-Ink: Quản lý số trang giữa các lần làm mới toàn phần (pagesUntilFullRefresh)
+//    để xóa hiện tượng bóng chữ (ghosting) mà vẫn đảm bảo lật trang nhanh, mượt mà.
+// 3. Quản lý phiên đọc (ReaderSession): Ghi nhận thời gian đọc, vị trí trang sách, tạo bookmark,
+//    lưu trích dẫn (clippings/highlights) và hỗ trợ đồng bộ tiến độ đọc qua KOReader Sync.
+// 4. Hỗ trợ điều khiển lật trang: Nhận lệnh từ nút bấm, chạm mép màn hình cảm ứng, cảm biến nghiêng
+//    (tilt) hoặc nút điều khiển lật trang không dây Bluetooth BLE.
+// ============================================================================
+
 #include <atomic>
 #include <memory>
 #include <string>

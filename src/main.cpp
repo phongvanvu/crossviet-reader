@@ -1,3 +1,22 @@
+// ============================================================================
+// CrossPoint Reader — Điểm Vào Chính Của Firmware (Main Entry Point)
+//
+// [MÔ TẢ KIẾN TRÚC BẰNG TIẾNG VIỆT]
+// File này là trung tâm điều khiển vòng đời hoạt động của firmware máy đọc sách CrossPoint:
+// 1. Khởi tạo hệ thống (setup()):
+//    - Kích hoạt chốt nguồn (holdPowerRails) và giải phóng rail thẻ nhớ SD (releaseSdRail).
+//    - Tự động nhận diện bo mạch phần cứng lúc khởi động qua I2C (XteinkDetect: phân biệt X3, X4,...).
+//    - Khởi tạo các lớp trừu tượng phần cứng (HAL): Màn hình E-Ink, Nút bấm, Quản lý nguồn, Cảm biến nghiêng.
+//    - Khởi tạo thư viện hiển thị GfxRenderer, hệ thống font chữ (SD card fonts + builtin fonts), i18n đa ngôn ngữ.
+//    - Gắn kết (mount) thẻ nhớ SD và nạp cài đặt cấu hình (CrossPointSettings) cùng trạng thái lưu dở (CrossPointState).
+//    - Khởi động ActivityManager và nạp Activity đầu tiên (HomeActivity hoặc tiếp tục cuốn sách đang đọc dở).
+//
+// 2. Vòng lặp chính (loop()):
+//    - Quét trạng thái phím bấm, màn hình cảm ứng, remote Bluetooth BLE và cảm biến nghiêng (MappedInputManager).
+//    - Xử lý các sự kiện khẩn cấp: Nhấn nút nguồn (ngủ / tắt nguồn), kiểm tra pin yếu, timeout tự động ngủ (auto-sleep).
+//    - Trao quyền điều khiển khung hình (frame cycle) cho ActivityManager để chạy loop của Activity hiện tại.
+// ============================================================================
+
 #include <Arduino.h>
 #include <BlePageTurner.h>
 #include <BoardConfig.h>

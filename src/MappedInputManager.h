@@ -1,5 +1,18 @@
 #pragma once
 
+// ============================================================================
+// CrossPoint Reader — Quản Lý Ánh Xạ Nhập Liệu (Mapped Input Manager)
+//
+// [MÔ TẢ KIẾN TRÚC BẰNG TIẾNG VIỆT]
+// MappedInputManager nhận tín hiệu thô từ phần cứng (HAL GPIO, FreeInk InputManager) và chuyển
+// đổi thành các sự kiện mang ý nghĩa logic thống nhất cho ứng dụng:
+//   - Phím chức năng chuẩn: Back, Confirm, Left, Right, Up, Down, PageForward, PageBack...
+//   - Hỗ trợ đa dạng cách thức điều khiển: Nút cứng vật lý, nút cảm ứng, thang đo điện trở ADC,
+//     thao tác vuốt màn hình cảm ứng (Swipe Left/Right/Up/Down), và remote Bluetooth BLE.
+//   - Xử lý phân biệt các kiểu bấm: Nhấn nhanh (click), nhấn đúp (double-click), nhấn giữ lâu
+//     (long press) và điều hướng nút nguồn (ngủ / bật tắt máy).
+// ============================================================================
+
 #include <HalGPIO.h>
 
 #include "util/HomeButtonInput.h"
