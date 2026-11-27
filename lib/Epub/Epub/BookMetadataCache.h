@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+class ZipFile;
+
 class BookMetadataCache {
  public:
   struct BookMetadata {
@@ -80,7 +82,9 @@ class BookMetadataCache {
   };
   std::unique_ptr<std::deque<SpineHrefIndexEntry>> spineHrefIndex;
 
-  static constexpr uint16_t LARGE_SPINE_THRESHOLD = 400;
+  // Threshold enabling hash-indexed lookups in both beginTocPass() (spineHrefIndex)
+  // and buildBookBin() (single-pass batch ZIP size lookup, capped at 2,048 items/batch).
+  static constexpr uint16_t LARGE_SPINE_THRESHOLD = 16;
 
   // FNV-1a 64-bit hash function
   static uint64_t fnvHash64(const std::string& s) {
@@ -116,7 +120,7 @@ class BookMetadataCache {
   bool cleanupTmpFiles() const;
 
   // Post-processing to update mappings and sizes
-  bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata);
+  bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata, ZipFile* sharedZip = nullptr);
 
   // Reading phase (read mode)
   bool load();

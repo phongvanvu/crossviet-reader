@@ -1715,8 +1715,8 @@ CssParser::CacheStatus CssParser::inspectCache() const {
 
   const bool partial = (flags & CSS_CACHE_FLAG_PARTIAL) != 0;
   if (!partial) {
-    // Complete caches are fully validated while hydrating, avoiding a second
-    // payload scan on every EPUB open.
+    // Complete caches are promoted atomically via rename in saveToCache();
+    // Section::startBuild() validates on demand and deletes corrupt caches.
     return CacheStatus::Complete;
   }
 

@@ -30,6 +30,14 @@ class EpubReaderActivity final : public ReaderActivity {
   std::shared_ptr<Epub> epub;
   std::unique_ptr<Epub::SyncMetadata> vocabularyMetadata;
   std::unique_ptr<Section> section = nullptr;
+  // Silent background pre-indexer for the next chapter (currentSpineIndex + 1).
+  // Mutually exclusive with section->isBuilding(), capped to PREFETCH_MAX_PAGES
+  // and released as soon as it finishes or when leaving the reading view.
+  struct ChapterPrefetch {
+    std::unique_ptr<Section> section = nullptr;
+    int checkedSpine = -1;
+    ReaderRenderSpec spec = {};
+  } prefetch;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
@@ -143,16 +151,32 @@ class EpubReaderActivity final : public ReaderActivity {
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
   static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
   static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
+  // Unloaned HTML inflation needs ~59 KB (2x8 KB stream + 11 KB tinfl + 32 KB window);
+  // require comfortable headroom before starting speculative prefetch on no-PSRAM boards.
+  static constexpr size_t PREFETCH_INFLATE_MIN_FREE_HEAP = 96 * 1024;
+  static constexpr size_t PREFETCH_INFLATE_MIN_MAX_ALLOC = 48 * 1024;
+  static constexpr size_t PREFETCH_CACHED_HTML_MIN_FREE_HEAP = 64 * 1024;
+  static constexpr size_t PREFETCH_CACHED_HTML_MIN_MAX_ALLOC = 32 * 1024;
+  static constexpr uint16_t PREFETCH_MAX_PAGES = 8;
+  static constexpr unsigned long PREFETCH_START_DELAY_MS = 1200;
   // Requires the render lock; heap admission is checked separately by the build tick.
   bool backgroundBuildWanted() const;
+  bool backgroundPrefetchWanted() const;
+  bool isIdleForBackgroundWork() const;
   bool buildTickHeapGate();
   bool buildHeapPaused = false;
+  // Callers of cancelPrefetchSection / resetSection / advanceToNextSpine must hold
+  // RenderLock (or run in onExit/destructor/sleep teardown where ActivityManager holds it).
+  void cancelPrefetchSection(bool resetChecked = false);
+  void resetSection(bool resetPrefetchChecked = false);
+  void advanceToNextSpine();
   // One bounded build step on the loop task, in a frame whose input did nothing. Lays out about
   // BACKGROUND_BUILD_PAGES_PER_TICK pages (one 1 KB parse step may add more) and hands the loop
   // back as soon as a button is down, so a short press is seen before more pages are built.
   // Returns true if a repaint was requested (caller should skip idle prewarm for this frame).
   bool backgroundBuildTick();
-  void idlePrewarmTick();
+  bool backgroundPrefetchTick();
+  bool idlePrewarmTick();
   bool anyButtonPressed() const;
   // A background build failed in this spine. The error would likely recur, so from then on the
   // spine is built only as far as the reader goes; pages from earlier build steps stay readable.
@@ -266,6 +290,7 @@ class EpubReaderActivity final : public ReaderActivity {
       : ReaderActivity("EpubReader", renderer, mappedInput, std::move(bookPath), allowFastInitialRefresh) {}
   ~EpubReaderActivity() override;
 
+  void onExit() override;
   void loop() override;
   void prepareForSleep() override;
   void render(RenderLock&& lock) override;

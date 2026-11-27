@@ -284,7 +284,7 @@ void Epub::discoverCssFilesFromZip(ZipFile* sharedZip) {
   }
 }
 
-CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existingCacheStatus) const {
+CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existingCacheStatus, ZipFile* sharedZip) const {
   // Maximum CSS file size we'll attempt to parse (uncompressed)
   // Larger files risk memory exhaustion on ESP32
   constexpr size_t MAX_CSS_FILE_SIZE = 128 * 1024;  // 128KB
@@ -323,7 +323,9 @@ CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existing
     std::sort(dedupEntries.get(), dedupEntries.get() + cssFiles.size(),
               [](const CssDedupEntry& lhs, const CssDedupEntry& rhs) { return lhs.pathHash < rhs.pathHash; });
 
-    ZipFile(filepath).enumerateFileEntries([&](std::string_view entryPath, uint32_t crc32, uint32_t compressedSize) {
+    std::optional<ZipFile> localZip;
+    ZipFile& dedupZip = sharedZip ? *sharedZip : localZip.emplace(filepath);
+    dedupZip.enumerateFileEntries([&](std::string_view entryPath, uint32_t crc32, uint32_t compressedSize) {
       if (!FsHelpers::hasCssExtension(entryPath)) {
         return;
       }
@@ -375,9 +377,13 @@ CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existing
       continue;
     }
 
-    // Check CSS file size before decompressing - skip files that are too large
+    // Check CSS file size before decompressing - skip files that are too large.
+    // When sharedZip is open, ZipFile caches this lookup for the readFileToStream right below.
+    const std::string normalizedCssPath = sharedZip ? FsHelpers::normalisePath(cssPath) : std::string();
     size_t cssFileSize = 0;
-    if (getItemSize(cssPath, &cssFileSize)) {
+    const bool sizeFound = sharedZip ? sharedZip->getInflatedFileSize(normalizedCssPath.c_str(), &cssFileSize)
+                                     : getItemSize(cssPath, &cssFileSize);
+    if (sizeFound) {
       if (cssFileSize > MAX_CSS_FILE_SIZE) {
         LOG_ERR("EBP", "CSS file too large (%zu bytes > %zu max), skipping: %s", cssFileSize, MAX_CSS_FILE_SIZE,
                 cssPath.c_str());
@@ -388,7 +394,7 @@ CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existing
       }
     }
 
-    // Extract CSS file to temp location
+    // Extract CSS file to temp location (keep 1KB chunks so unloaned warm CSS rebuilds stay within 64KB heap floor)
     const auto tmpCssPath = getCachePath() + "/.tmp.css";
     HalFile tempCssFile;
     if (!Storage.openFileForWrite("EBP", tmpCssPath, tempCssFile)) {
@@ -396,7 +402,9 @@ CssParser::ParseResult Epub::parseCssFiles(const CssParser::CacheStatus existing
       parseResult = CssParser::ParseResult::Error;
       continue;
     }
-    if (!readItemContentsToStream(cssPath, tempCssFile, 1024)) {
+    const bool streamed = sharedZip ? sharedZip->readFileToStream(normalizedCssPath.c_str(), tempCssFile, 1024)
+                                    : readItemContentsToStream(cssPath, tempCssFile, 1024);
+    if (!streamed) {
       LOG_ERR("EBP", "Could not read CSS file: %s", cssPath.c_str());
       // Explicitly close() file before calling Storage.remove()
       tempCssFile.close();
@@ -516,30 +524,28 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
     }
     if (!skipLoadingCss) {
       const CssParser::CacheStatus cacheStatus = cssParser->inspectCache();
-      CssParser::CacheLoadResult cacheLoadResult = CssParser::CacheLoadResult::Invalid;
-      if (cacheStatus == CssParser::CacheStatus::Complete) {
-        cacheLoadResult = cssParser->loadFromCache();
-      }
-
-      if (cacheLoadResult == CssParser::CacheLoadResult::LowMemory) {
-        LOG_ERR("EBP", "Insufficient heap to load CSS cache; keeping it for a later retry");
-      } else if (cacheLoadResult != CssParser::CacheLoadResult::Complete) {
+      // Complete caches are written atomically via rename in saveToCache(), and
+      // Section::startBuild() hydrates and validates rules on demand when laying out
+      // an uncached chapter. Skip hydrating here only to discard via clear() below.
+      if (cacheStatus != CssParser::CacheStatus::Complete) {
         LOG_DBG("EBP", "CSS cache missing, partial, or invalid; attempting to parse source stylesheets");
-        if (cacheStatus == CssParser::CacheStatus::Invalid ||
-            (cacheStatus == CssParser::CacheStatus::Complete &&
-             cacheLoadResult == CssParser::CacheLoadResult::Invalid)) {
+        if (cacheStatus == CssParser::CacheStatus::Invalid) {
           cssParser->deleteCache();
         }
 
         BookMetadataCache::BookMetadata cachedMetadata = bookMetadataCache->coreMetadata;
         CssParser::ParseResult cssParseResult = CssParser::ParseResult::Error;
-        if (!parseContentOpf(cachedMetadata, /*writeSpineEntries=*/false)) {
+        ZipFile zip(filepath);
+        ZipFile* sharedZip = !decryptor && zip.open() ? &zip : nullptr;
+        if (!parseContentOpf(cachedMetadata, /*writeSpineEntries=*/false, /*metadataOnly=*/false, sharedZip,
+                             /*normalizeLookup=*/sharedZip != nullptr)) {
           LOG_ERR("EBP", "Could not parse content.opf from cached bookMetadata for CSS files");
         } else {
-          discoverCssFilesFromZip();
+          discoverCssFilesFromZip(sharedZip);
           bookMetadataCache.reset();
-          cssParseResult = parseCssFiles(cacheStatus);
+          cssParseResult = parseCssFiles(cacheStatus, sharedZip);
         }
+        if (sharedZip) zip.close();
         bookMetadataCache.reset();
         bookMetadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath);
         if (!bookMetadataCache || !bookMetadataCache->load()) {
@@ -585,86 +591,88 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
     return false;
   }
 
-  // Keep size lookups and reads on the same open archive. Protected
-  // entries still go through the content decryptor.
-  ZipFile zip(filepath);
-  ZipFile* sharedZip = !decryptor && zip.open() ? &zip : nullptr;
+  // Keep size lookups and reads on the same open archive through OPF, TOC,
+  // buildBookBin, and CSS parsing. Scoped so RAII closes the file uniformly on
+  // every exit before bookMetadataCache->load() reopens book.bin.
+  {
+    ZipFile zip(filepath);
+    ZipFile* sharedZip = !decryptor && zip.open() ? &zip : nullptr;
 
-  // OPF Pass
-  const uint32_t opfStart = millis();
-  BookMetadataCache::BookMetadata bookMetadata;
-  if (!bookMetadataCache->beginContentOpfPass()) {
-    LOG_ERR("EBP", "Could not begin writing content.opf pass");
-    return false;
-  }
-  if (!parseContentOpf(bookMetadata, true, false, sharedZip, /*normalizeLookup=*/sharedZip != nullptr)) {
-    LOG_ERR("EBP", "Could not parse content.opf");
-    return false;
-  }
-  discoverCssFilesFromZip(sharedZip);
-  if (!bookMetadataCache->endContentOpfPass()) {
-    LOG_ERR("EBP", "Could not end writing content.opf pass");
-    return false;
-  }
-  LOG_DBG("EBP", "OPF pass completed in %lu ms", millis() - opfStart);
+    // OPF Pass
+    const uint32_t opfStart = millis();
+    BookMetadataCache::BookMetadata bookMetadata;
+    if (!bookMetadataCache->beginContentOpfPass()) {
+      LOG_ERR("EBP", "Could not begin writing content.opf pass");
+      return false;
+    }
+    if (!parseContentOpf(bookMetadata, true, false, sharedZip, /*normalizeLookup=*/sharedZip != nullptr)) {
+      LOG_ERR("EBP", "Could not parse content.opf");
+      return false;
+    }
+    discoverCssFilesFromZip(sharedZip);
+    if (!bookMetadataCache->endContentOpfPass()) {
+      LOG_ERR("EBP", "Could not end writing content.opf pass");
+      return false;
+    }
+    LOG_DBG("EBP", "OPF pass completed in %lu ms", millis() - opfStart);
 
-  // TOC Pass - try EPUB 3 nav first, fall back to NCX
-  const uint32_t tocStart = millis();
-  if (!bookMetadataCache->beginTocPass()) {
-    LOG_ERR("EBP", "Could not begin writing toc pass");
-    return false;
-  }
+    // TOC Pass - try EPUB 3 nav first, fall back to NCX
+    const uint32_t tocStart = millis();
+    if (!bookMetadataCache->beginTocPass()) {
+      LOG_ERR("EBP", "Could not begin writing toc pass");
+      return false;
+    }
 
-  bool tocParsed = false;
+    bool tocParsed = false;
 
-  // Try EPUB 3 nav document first (preferred)
-  if (!tocNavItem.empty()) {
-    LOG_DBG("EBP", "Attempting to parse EPUB 3 nav document");
-    tocParsed = parseTocNavFile(sharedZip);
-  }
+    // Try EPUB 3 nav document first (preferred)
+    if (!tocNavItem.empty()) {
+      LOG_DBG("EBP", "Attempting to parse EPUB 3 nav document");
+      tocParsed = parseTocNavFile(sharedZip);
+    }
 
-  // Fall back to NCX if nav parsing failed or wasn't available
-  if (!tocParsed && !tocNcxItem.empty()) {
-    LOG_DBG("EBP", "Falling back to NCX TOC");
-    tocParsed = parseTocNcxFile(sharedZip);
-  }
+    // Fall back to NCX if nav parsing failed or wasn't available
+    if (!tocParsed && !tocNcxItem.empty()) {
+      LOG_DBG("EBP", "Falling back to NCX TOC");
+      tocParsed = parseTocNcxFile(sharedZip);
+    }
 
-  if (!tocParsed) {
-    LOG_ERR("EBP", "Warning: Could not parse any TOC format");
-    // Continue anyway - book will work without TOC
-  }
+    if (!tocParsed) {
+      LOG_ERR("EBP", "Warning: Could not parse any TOC format");
+      // Continue anyway - book will work without TOC
+    }
 
-  if (!bookMetadataCache->endTocPass()) {
-    LOG_ERR("EBP", "Could not end writing toc pass");
-    return false;
-  }
-  if (sharedZip) zip.close();
-  LOG_DBG("EBP", "TOC pass completed in %lu ms", millis() - tocStart);
+    if (!bookMetadataCache->endTocPass()) {
+      LOG_ERR("EBP", "Could not end writing toc pass");
+      return false;
+    }
+    LOG_DBG("EBP", "TOC pass completed in %lu ms", millis() - tocStart);
 
-  // Close the cache files
-  if (!bookMetadataCache->endWrite()) {
-    LOG_ERR("EBP", "Could not end writing cache");
-    return false;
-  }
+    // Close the cache files
+    if (!bookMetadataCache->endWrite()) {
+      LOG_ERR("EBP", "Could not end writing cache");
+      return false;
+    }
 
-  // Build final book.bin
-  const uint32_t buildStart = millis();
-  if (!bookMetadataCache->buildBookBin(filepath, bookMetadata)) {
-    LOG_ERR("EBP", "Could not update mappings and sizes");
-    return false;
-  }
-  LOG_DBG("EBP", "buildBookBin completed in %lu ms", millis() - buildStart);
-  LOG_DBG("EBP", "Total indexing completed in %lu ms", millis() - indexingStart);
+    // Build final book.bin (reusing the already-open ZIP to avoid reopening & EOCD rescan)
+    const uint32_t buildStart = millis();
+    if (!bookMetadataCache->buildBookBin(filepath, bookMetadata, sharedZip)) {
+      LOG_ERR("EBP", "Could not update mappings and sizes");
+      return false;
+    }
+    LOG_DBG("EBP", "buildBookBin completed in %lu ms", millis() - buildStart);
+    LOG_DBG("EBP", "Total indexing completed in %lu ms", millis() - indexingStart);
 
-  if (!bookMetadataCache->cleanupTmpFiles()) {
-    LOG_DBG("EBP", "Could not cleanup tmp files - ignoring");
-  }
+    if (!bookMetadataCache->cleanupTmpFiles()) {
+      LOG_DBG("EBP", "Could not cleanup tmp files - ignoring");
+    }
 
-  if (!skipLoadingCss) {
-    // Parse CSS before reloading book.bin to leave more heap for CSS rule-table growth.
-    bookMetadataCache.reset();
-    if (parseCssFiles(cssParser->inspectCache()) != CssParser::ParseResult::Error) {
-      Storage.removeDir((cachePath + "/sections").c_str());
+    if (!skipLoadingCss) {
+      // Parse CSS before reloading book.bin to leave more heap for CSS rule-table growth.
+      bookMetadataCache.reset();
+      if (parseCssFiles(cssParser->inspectCache(), sharedZip) != CssParser::ParseResult::Error) {
+        Storage.removeDir((cachePath + "/sections").c_str());
+      }
     }
   }
 

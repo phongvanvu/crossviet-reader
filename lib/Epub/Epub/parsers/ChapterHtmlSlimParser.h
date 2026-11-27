@@ -119,6 +119,8 @@ class ChapterHtmlSlimParser {
   bool bodyFontDetected = false;
   bool detectBodyFont();
   bool pendingPageBreak = false;  // set when a page-break-after element closes
+  bool allowFrameBufferLoan = true;
+  bool stoppedForFrameBufferLoan = false;
 
   // Initial letter captured from a ::first-letter block or a leading float/initial-letter span,
   // drawn as a PageDropCap when its block is laid out.
@@ -342,6 +344,8 @@ class ChapterHtmlSlimParser {
   }
   void setParagraphIndentSpaces(const uint8_t spaces) { paragraphIndentSpaces = spaces; }
   void setPublisherFonts(const PublisherFonts mode) { publisherFonts = mode; }
+  void setAllowFrameBufferLoan(const bool allow) { allowFrameBufferLoan = allow; }
+  bool wasStoppedForFrameBufferLoan() const { return stoppedForFrameBufferLoan; }
 
   // One-shot parse: builds every page before returning (begin + step* + finish).
   bool parseAndBuildPages();

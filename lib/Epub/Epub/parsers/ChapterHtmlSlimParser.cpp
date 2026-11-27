@@ -1836,6 +1836,12 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
               bool gotDimensions = headerProbe.getDimensions(dims);
 
               if (!gotDimensions) {
+                if (!self->allowFrameBufferLoan) {
+                  LOG_DBG("EHP", "Stopping background parse: image probe requires framebuffer loan");
+                  self->stoppedForFrameBufferLoan = true;
+                  self->requestStop();
+                  return;
+                }
                 // Retry with framebuffer scratch when the heap cannot fit the inflate window.
                 GfxRenderer::FrameBufferLoan probeLoan(self->renderer);
                 ImageDimsProbe retryProbe;

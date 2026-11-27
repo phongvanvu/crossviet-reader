@@ -171,7 +171,7 @@ bool BookMetadataCache::endWrite() {
   return true;
 }
 
-bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMetadata& metadata) {
+bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMetadata& metadata, ZipFile* sharedZip) {
   // Open all three files, writing to meta, reading from spine and toc
   if (!Storage.openFileForWrite("BMC", cachePath + bookBinFile, bookFile)) {
     return false;
@@ -253,18 +253,23 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   }
 
   const bool isZip = !FsHelpers::hasTxtExtension(epubPath) && !FsHelpers::hasMarkdownExtension(epubPath);
-  ZipFile zip(epubPath);
+  std::optional<ZipFile> localZip;
+  ZipFile* zipPtr = sharedZip;
   std::optional<std::deque<uint32_t>> spineSizes;
   size_t rawSize = 0;
   if (isZip) {
-    // Pre-open zip file to speed up size calculations
-    if (!zip.open()) {
-      LOG_ERR("BMC", "Could not open EPUB zip for size calculations");
-      // Explicit close() required: member variables persist beyond function scope
-      bookFile.close();
-      spineFile.close();
-      tocFile.close();
-      return false;
+    // Pre-open zip file to speed up size calculations (unless caller supplied one)
+    if (!zipPtr) {
+      localZip.emplace(epubPath);
+      if (!localZip->open()) {
+        LOG_ERR("BMC", "Could not open EPUB zip for size calculations");
+        // Explicit close() required: member variables persist beyond function scope
+        bookFile.close();
+        spineFile.close();
+        tocFile.close();
+        return false;
+      }
+      zipPtr = &*localZip;
     }
     // NOTE: We intentionally skip calling loadAllFileStatSlims() here.
     // For large EPUBs (2000+ chapters), pre-loading all ZIP central directory entries
@@ -297,7 +302,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
         std::sort(targets.begin(), targets.end(), [](const ZipFile::SizeTarget& a, const ZipFile::SizeTarget& b) {
           return a.hash < b.hash || (a.hash == b.hash && a.len < b.len);
         });
-        matched += zip.fillUncompressedSizes(targets, *spineSizes);
+        matched += zipPtr->fillUncompressedSizes(targets, *spineSizes);
         targets.clear();
       }
       LOG_DBG("BMC", "Batch lookup matched %d/%d spine items", matched, spineCount);
@@ -329,7 +334,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
       itemSize = spineSizes ? (*spineSizes)[i] : 0;
       if (itemSize == 0) {
         const std::string path = FsHelpers::normalisePath(spineEntry.href);
-        if (!zip.getInflatedFileSize(path.c_str(), &itemSize)) {
+        if (!zipPtr->getInflatedFileSize(path.c_str(), &itemSize)) {
           LOG_ERR("BMC", "Warning: Could not get size for spine item: %s", path.c_str());
         }
       }
@@ -340,7 +345,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     writeSpineEntryTo(bookOut, spineEntry);
   }
   spineSizes.reset();
-  if (isZip) zip.close();
+  if (localZip) localZip->close();
 
   // Loop through toc entries from toc file writing to book.bin
   tocIn.seek(0);

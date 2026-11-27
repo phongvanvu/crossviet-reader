@@ -98,7 +98,10 @@ class Section {
   // builds. createSectionFile() above is the one-shot wrapper over these.
   //   if (!startBuild(...)) fail;
   //   each tick: buildSomeMore(N); render up to pageCount; when isBuildComplete() stop.
-  bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
+  bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr,
+                  bool allowFrameBufferLoan = true);
+  void setAllowFrameBufferLoan(bool allow);
+  int getSpineIndex() const { return spineIndex; }
   // Lay out up to maxPages more pages (maxPages <= 0 = build to completion). Returns
   // false on error (the build is abandoned). Sets isBuildComplete() when finished.
   // yieldNow, when given, is asked after every parse step (1 KB of HTML, whose callbacks may

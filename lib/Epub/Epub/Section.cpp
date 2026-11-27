@@ -315,12 +315,14 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   return buildComplete_;
 }
 
-bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn) {
+bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn,
+                         const bool allowFrameBufferLoan) {
   if (build_) {
     LOG_ERR("SCT", "startBuild called while a build is already active");
     return false;
   }
-  // Reclaim rebuildable font caches before CSS and layout allocations.
+  // Reclaim rebuildable font caches before CSS and layout allocations (required on
+  // ESP32-C3 with .cpfont to preserve layout headroom; see #3527).
   if (auto* fontCache = renderer.getFontCacheManager()) {
     fontCache->releaseSdFontCaches();
   }
@@ -452,7 +454,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
         return false;
       }
       if (cacheResult == CssParser::CacheLoadResult::Invalid) {
-        LOG_ERR("SCT", "Failed to load CSS from cache");
+        LOG_ERR("SCT", "Failed to load CSS from cache; purging corrupt cache for next open");
+        ctx->cssParser->deleteCache();
       }
     }
   }
@@ -498,6 +501,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   ctx->parser->setTextSpacing(spec.characterSpacing, spec.wordSpacingPercent);
   ctx->parser->setParagraphIndentSpaces(spec.paragraphIndentSpaces);
   ctx->parser->setPublisherFonts(spec.publisherFonts);
+  ctx->parser->setAllowFrameBufferLoan(allowFrameBufferLoan);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   ComplexShaper::setDocumentLanguage(epub->getLanguage().c_str());
   build_ = std::move(ctx);
@@ -509,6 +513,12 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   }
   build_->totalBytes = build_->parser->parseTotalBytes();
   return true;
+}
+
+void Section::setAllowFrameBufferLoan(const bool allow) {
+  if (build_ && build_->parser) {
+    build_->parser->setAllowFrameBufferLoan(allow);
+  }
 }
 
 bool Section::buildSomeMore(const int maxPages, bool (*yieldNow)()) {
@@ -523,6 +533,11 @@ bool Section::buildSomeMore(const int maxPages, bool (*yieldNow)()) {
   for (;;) {
     const auto status = build_->parser->parseStep();
     if (status == ChapterHtmlSlimParser::ParseStatus::Error) {
+      if (build_->parser->wasStoppedForFrameBufferLoan()) {
+        LOG_DBG("SCT", "Deferring background build: image probe requires framebuffer loan");
+        suspendBuild();
+        return false;
+      }
       LOG_ERR("SCT", "Parse error during incremental build");
       abandonBuild();
       return false;

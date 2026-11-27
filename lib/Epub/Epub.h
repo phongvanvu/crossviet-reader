@@ -54,7 +54,7 @@ class Epub {
   bool parseTocNcxFile(ZipFile* sharedZip) const;
   bool parseTocNavFile(ZipFile* sharedZip) const;
   void discoverCssFilesFromZip(ZipFile* sharedZip = nullptr);
-  CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus) const;
+  CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus, ZipFile* sharedZip = nullptr) const;
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
