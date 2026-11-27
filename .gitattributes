@@ -1,2 +1,5 @@
 # Preserve the original whitespace in copied license texts.
 licenses/*.txt -whitespace
+
+# Ensure patch files retain LF line endings so git apply succeeds on all platforms
+*.patch text eol=lf
