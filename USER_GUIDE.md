@@ -262,6 +262,8 @@ Settings are grouped into **System**, **Display**, **Reader**, **Controls**, **L
   - "Lyra Extended" - Lyra, but displays 3 books instead of 1 on the **[Home Screen](#31-home-screen)**
   - "RoundedRaff" - A rounded theme with additional visual styling
 
+- **UI Font**: Choose the font used for menus, library titles, and other interface text. See [Menu Fonts](docs/sd-card-fonts.md#menu-fonts) for supported files and sizes.
+
 - **Sunlight Fading Fix**: Configure whether to enable a software-fix for the issue where white X4 models may fade when used in direct sunlight:
   
   - "OFF" (default) - Disable the fix
@@ -283,6 +285,11 @@ Settings are grouped into **System**, **Display**, **Reader**, **Controls**, **L
 - **Reader Paragraph Alignment**: Set the alignment of paragraphs; options are "Justified" (default), "Left", "Center", or "Right".
 
 - **Embedded Style**: Whether to use the EPUB file's embedded HTML and CSS stylisation and formatting; options are "ON" or "OFF".
+
+- **Publisher Fonts**: On devices with external RAM, open **Text Settings → Style** to choose how fonts embedded in an EPUB are used. **Embedded Style** must be on, and the book must contain supported font files.
+  - **Off**: Use your selected reading font instead of the book's embedded fonts.
+  - **Ignore Body Font** (default): Use your selected reading font instead of the publisher's main body font. Allow other embedded fonts from the book. Text using the same font family as the book's body also uses your selected reading font.
+  - **All Text**: Use the book's embedded fonts wherever they are specified and supported, with your reading font as the fallback.
 
 - **Hyphenation**: Whether to hyphenate text in Reading Mode; options are "ON" or "OFF". Korean text wraps only at spaces when "OFF"; when "ON", a Korean word may also wrap at the end of a line between syllables or where it meets digits, Latin letters, or brackets (no hyphen is drawn).
 

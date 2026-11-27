@@ -47,6 +47,7 @@
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
 #include "WifiPowerSaveGuard.h"
+#include "activities/RenderLock.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
@@ -369,7 +370,7 @@ class CrossPointWebServer::RouteHandler final : public RequestHandler {
   CrossPointWebServer& owner_;
 };
 
-void CrossPointWebServer::begin() {
+void CrossPointWebServer::begin(GfxRenderer& renderer) {
   if (running) {
     LOG_DBG("WEB", "Web server already running");
     return;
@@ -383,6 +384,12 @@ void CrossPointWebServer::begin() {
   if (!isStaConnected && !isInApMode) {
     LOG_DBG("WEB", "Cannot start webserver - no valid network (mode=%d, status=%d)", wifiMode, WiFi.status());
     return;
+  }
+
+  {
+    RenderLock lock;
+    // Any transfer route can replace or delete a file that a loaded font reads.
+    sdFontSystem.releaseForStorage(renderer);
   }
 
   // Store AP mode flag for later use (e.g., in handleStatus)
@@ -2578,7 +2585,6 @@ void CrossPointWebServer::handleFetch() {
   size_t nextHeapLog = written;
   bool sdFull = false;
   bool segmentBoundary = false;
-  bool rangeUnsupported = false;
   const unsigned long fetchStartedAt = millis();
   unsigned long lastBrowserHeartbeat = fetchStartedAt;
   bool browserResponseStarted = false;
@@ -2637,14 +2643,16 @@ void CrossPointWebServer::handleFetch() {
     return true;
   };
   sink.rewind = [&] {
-    // Range ignored: the body restarts from byte 0, which only a transfer
-    // that has not yet reported progress to the browser can follow.
+    // Range ignored: the body restarts from byte 0, so rewrite the .part from
+    // this one response. A later segment would restart again, so finish the
+    // whole body in this request.
     if (requestedOffset > 0) {
-      rangeUnsupported = true;
-      return false;
+      LOG_INF("WEB", "Fetch Range ignored at %u; downloading the whole body", (unsigned)requestedOffset);
+      segmentLimit = 0;
     }
     file.close();
     written = 0;
+    nextHeapLog = 0;
     return Storage.openFileForWrite("PLG", part, file);
   };
   // A failed single request's first bytes, so the plugin can tell why. The
@@ -2729,7 +2737,7 @@ void CrossPointWebServer::handleFetch() {
   if (!complete && ok2xx && !midSegment) {
     Storage.remove(part.c_str());
     char msg[96];
-    const char* error = sdFull ? "sd write failed" : rangeUnsupported ? "range unsupported" : "download truncated";
+    const char* error = sdFull ? "sd write failed" : "download truncated";
     // complete:false matters once the heartbeat has committed HTTP 200 chunked:
     // it is the only signal fetchToSd()'s resume loop still sees on this path
     // (it then detects zero progress and throws instead of returning success).
