@@ -502,13 +502,14 @@ bool BookMetadataCache::load() {
   bookSize = 0;
   windowFirst = -1;
   windowStarts.reserve((spineCount + SIZE_WINDOW - 1) / SIZE_WINDOW);
+  serialization::BufferedFileReader reader(bookFile, BUILD_IO_BUFFER_SIZE);
   for (uint16_t i = 0; i < spineCount; i++) {
     if (i % SIZE_WINDOW == 0) windowStarts.push_back(bookSize);
     uint32_t hrefLen;
     int16_t tocIndex;
-    if (!serialization::tryReadPod(bookFile, hrefLen) || hrefLen > fileSize - bookFile.position() ||
-        !bookFile.seekCur(hrefLen) || !serialization::tryReadPod(bookFile, bookSize) ||
-        !serialization::tryReadPod(bookFile, tocIndex)) {
+    if (!serialization::tryReadPod(reader, hrefLen) || reader.position() > fileSize ||
+        hrefLen > fileSize - reader.position() || !reader.seek(reader.position() + hrefLen) ||
+        !serialization::tryReadPod(reader, bookSize) || !serialization::tryReadPod(reader, tocIndex)) {
       return rejectCache();
     }
   }

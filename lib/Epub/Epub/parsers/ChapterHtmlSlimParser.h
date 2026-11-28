@@ -1,5 +1,6 @@
 #pragma once
 
+#include <BufferedFile.h>
 #include <HalStorage.h>
 #include <expat.h>
 
@@ -8,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -255,6 +257,8 @@ class ChapterHtmlSlimParser {
   // boundaries.
   XML_Parser xmlParser_ = nullptr;
   HalFile parseFile_;
+  std::optional<serialization::BufferedFileReader> parseReader_;
+  size_t parseFileSize_ = 0;
   uint32_t parseStartTime_ = 0;
 
   void updateEffectiveInlineStyle();
@@ -369,6 +373,8 @@ class ChapterHtmlSlimParser {
   // Byte progress of the in-flight parse, used to estimate a still-building section's total page
   // count (a giant single-spine book never fully lays out, so its real count is unknown). Valid
   // between beginParse() and finishParse()/abortParse().
-  size_t parseBytesConsumed() { return parseFile_ ? parseFile_.position() : 0; }
-  size_t parseTotalBytes() { return parseFile_ ? parseFile_.size() : 0; }
+  size_t parseBytesConsumed() {
+    return parseReader_ ? parseReader_->position() : (parseFile_ ? parseFile_.position() : 0);
+  }
+  size_t parseTotalBytes() { return parseFile_ ? parseFileSize_ : 0; }
 };

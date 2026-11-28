@@ -316,15 +316,19 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
 }
 
 bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn,
-                         const bool allowFrameBufferLoan) {
+                         const BuildMode mode) {
   if (build_) {
     LOG_ERR("SCT", "startBuild called while a build is already active");
     return false;
   }
-  // Reclaim rebuildable font caches before CSS and layout allocations (required on
-  // ESP32-C3 with .cpfont to preserve layout headroom; see #3527).
-  if (auto* fontCache = renderer.getFontCacheManager()) {
-    fontCache->releaseSdFontCaches();
+  // Reclaim rebuildable font caches before foreground CSS and layout allocations
+  // (required on ESP32-C3 with .cpfont to preserve layout headroom; see #3527).
+  // Skip during speculative background prefetch so we do not evict the active
+  // chapter's warm glyph caches while reading.
+  if (mode == BuildMode::Foreground) {
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      fontCache->releaseSdFontCaches();
+    }
   }
   buildComplete_ = false;
   builtPageCount_ = 0;
@@ -501,7 +505,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   ctx->parser->setTextSpacing(spec.characterSpacing, spec.wordSpacingPercent);
   ctx->parser->setParagraphIndentSpaces(spec.paragraphIndentSpaces);
   ctx->parser->setPublisherFonts(spec.publisherFonts);
-  ctx->parser->setAllowFrameBufferLoan(allowFrameBufferLoan);
+  ctx->parser->setAllowFrameBufferLoan(mode == BuildMode::Foreground);
+  ctx->mode = mode;
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   ComplexShaper::setDocumentLanguage(epub->getLanguage().c_str());
   build_ = std::move(ctx);
@@ -515,9 +520,12 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   return true;
 }
 
-void Section::setAllowFrameBufferLoan(const bool allow) {
-  if (build_ && build_->parser) {
-    build_->parser->setAllowFrameBufferLoan(allow);
+void Section::promoteToForeground() {
+  if (build_) {
+    build_->mode = BuildMode::Foreground;
+    if (build_->parser) {
+      build_->parser->setAllowFrameBufferLoan(true);
+    }
   }
 }
 
@@ -798,6 +806,7 @@ bool Section::finalizeBuild() {
     }
   }
 
+  const BuildMode mode = build_->mode;
   const bool committed = commitBuildFile(SECTION_FILE_VERSION, 0, 0);
   if (build_->cssParser) build_->cssParser->clear();
   build_.reset();
@@ -813,9 +822,11 @@ bool Section::finalizeBuild() {
   partial_ = false;
   partialPageCount_ = 0;
   pageCount = builtPageCount_;
-  // Drop caches grown beside parser allocations so prewarming can reuse the freed space.
-  if (auto* fontCache = renderer.getFontCacheManager()) {
-    fontCache->releaseSdFontCaches();
+  // Drop caches grown beside foreground parser allocations so prewarming can reuse the freed space.
+  if (mode == BuildMode::Foreground) {
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      fontCache->releaseSdFontCaches();
+    }
   }
   return true;
 }

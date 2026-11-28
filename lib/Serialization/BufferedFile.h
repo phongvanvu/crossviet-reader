@@ -143,6 +143,11 @@ void readPod(BufferedFileReader& in, T& value) {
   in.read(&value, sizeof(T));
 }
 
+template <typename T>
+bool tryReadPod(BufferedFileReader& in, T& value) {
+  return in.read(&value, sizeof(T)) == sizeof(T);
+}
+
 inline void writeString(BufferedFileWriter& out, const std::string& s) {
   const uint32_t len = s.size();
   writePod(out, len);

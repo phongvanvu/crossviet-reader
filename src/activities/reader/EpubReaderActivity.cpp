@@ -483,7 +483,7 @@ void EpubReaderActivity::advanceToNextSpine() {
   if (prefetch.section && prefetch.section->getSpineIndex() == currentSpineIndex && buildViewportWidth > 0 &&
       buildViewportHeight > 0 && prefetch.spec == SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight)) {
     section = std::move(prefetch.section);
-    section->setAllowFrameBufferLoan(true);
+    section->promoteToForeground();
     prefetch.checkedSpine = -1;
     section->currentPage = 0;
     cachedChapterTotalPageCount = 0;
@@ -600,10 +600,9 @@ bool EpubReaderActivity::backgroundPrefetchTick() {
     }
 
     HalPowerManager::Lock powerLock;
-    if (!next->startBuild(spec, nullptr, /*allowFrameBufferLoan=*/false)) {
+    if (!next->startBuild(spec, nullptr, Section::BuildMode::BackgroundPrefetch)) {
       LOG_ERR("ERS", "Background prefetch failed to start for spine %d", nextSpine);
       prefetch.checkedSpine = nextSpine;
-      idlePrewarmOffset = 0;
       return false;
     }
     prefetch.section = std::move(next);
@@ -618,7 +617,6 @@ bool EpubReaderActivity::backgroundPrefetchTick() {
     LOG_DBG("ERS", "Background prefetch stopped/deferred for spine %d", nextSpine);
     prefetch.checkedSpine = nextSpine;
     cancelPrefetchSection();
-    idlePrewarmOffset = 0;
     return false;
   }
   if (prefetch.section->isBuildComplete() || prefetch.section->pageCount >= PREFETCH_MAX_PAGES) {
@@ -626,9 +624,8 @@ bool EpubReaderActivity::backgroundPrefetchTick() {
             prefetch.section->isBuildComplete() ? "complete" : "partial");
     prefetch.checkedSpine = nextSpine;
     // Destructor commits finalized or partial .bin (covering pages 0..PREFETCH_MAX_PAGES-1)
-    // and frees 100% of parser/CSS RAM immediately. Re-enable next-page glyph prewarm.
+    // and frees 100% of parser/CSS RAM immediately.
     cancelPrefetchSection();
-    idlePrewarmOffset = 0;
   }
   return true;
 }

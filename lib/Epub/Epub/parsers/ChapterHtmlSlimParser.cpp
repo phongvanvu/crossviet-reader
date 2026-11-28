@@ -3005,19 +3005,20 @@ bool ChapterHtmlSlimParser::detectBodyFont() {
   }
   probe->attach(xmlParser_);
   size_t consumed = 0;
-  while (parseFile_.available() > 0 && consumed < BODY_FONT_SCAN_BYTES) {
+  while (parseReader_->position() < parseFileSize_ && consumed < BODY_FONT_SCAN_BYTES) {
     void* const buffer = XML_GetBuffer(xmlParser_, PARSE_BUFFER_SIZE);
     if (!buffer) {
       LOG_ERR("EHP", "OOM: body font scan buffer");
       return false;
     }
-    const size_t length = parseFile_.read(buffer, PARSE_BUFFER_SIZE);
+    const size_t length = parseReader_->read(buffer, PARSE_BUFFER_SIZE);
     if (length == 0) {
       LOG_ERR("EHP", "Body font scan read failed");
       return false;
     }
     consumed += length;
-    if (XML_ParseBuffer(xmlParser_, static_cast<int>(length), parseFile_.available() == 0) == XML_STATUS_ERROR) {
+    if (XML_ParseBuffer(xmlParser_, static_cast<int>(length), parseReader_->position() >= parseFileSize_) ==
+        XML_STATUS_ERROR) {
       // The layout pass reports malformed XML and handles tolerated trailing data.
       break;
     }
@@ -3026,7 +3027,7 @@ bool ChapterHtmlSlimParser::detectBodyFont() {
   bodyFontFamily = probe->family();
   LOG_DBG("EHP", "Body font %08x from %u bytes (probe %u bytes)", static_cast<unsigned>(bodyFontFamily),
           static_cast<unsigned>(consumed), static_cast<unsigned>(sizeof(BodyFontProbe)));
-  if (!XML_ParserReset(xmlParser_, nullptr) || !parseFile_.seek(0)) {
+  if (!XML_ParserReset(xmlParser_, nullptr) || !parseReader_->seek(0)) {
     LOG_ERR("EHP", "Failed to rewind after body font scan");
     return false;
   }
@@ -3083,9 +3084,13 @@ bool ChapterHtmlSlimParser::beginParse() {
     xmlParser_ = nullptr;
     return false;
   }
+  parseFileSize_ = parseFile_.size();
+  // Batch HTML reads in 4 KB chunks so alternating parseStep() reads and
+  // Section::onPageComplete() writes do not thrash SdFat's single sector cache.
+  parseReader_.emplace(parseFile_, 4096);
 
   // Get file size to decide whether to show indexing popup.
-  if (popupFn && parseFile_.size() >= MIN_SIZE_FOR_POPUP) {
+  if (popupFn && parseFileSize_ >= MIN_SIZE_FOR_POPUP) {
     popupFn();
   }
 
@@ -3119,14 +3124,15 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
     return ParseStatus::Error;
   }
 
-  const size_t len = parseFile_.read(buf, PARSE_BUFFER_SIZE);
+  const size_t len = parseReader_->read(buf, PARSE_BUFFER_SIZE);
+  const bool atEnd = parseReader_->position() >= parseFileSize_;
 
-  if (len == 0 && parseFile_.available() > 0) {
+  if (len == 0 && !atEnd) {
     LOG_ERR("EHP", "File read error");
     return ParseStatus::Error;
   }
 
-  const int done = parseFile_.available() == 0;
+  const int done = atEnd ? 1 : 0;
 
   if (XML_ParseBuffer(xmlParser_, static_cast<int>(len), done) == XML_STATUS_ERROR) {
     if (stopRequested) return ParseStatus::Error;
@@ -3147,6 +3153,8 @@ void ChapterHtmlSlimParser::abortParse() {
     destroyXmlParser(xmlParser_);
     xmlParser_ = nullptr;
   }
+  parseReader_.reset();
+  parseFileSize_ = 0;
   // Only close the file if it was successfully opened in beginParse()
   if (parseFile_.isOpen()) {
     parseFile_.close();
@@ -3173,6 +3181,8 @@ bool ChapterHtmlSlimParser::finishParse() {
     destroyXmlParser(xmlParser_);
     xmlParser_ = nullptr;
   }
+  parseReader_.reset();
+  parseFileSize_ = 0;
   parseFile_.close();
 
   // Process last page if there is still text

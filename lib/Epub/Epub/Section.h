@@ -15,6 +15,10 @@ class ChapterHtmlSlimParser;
 class CssParser;
 
 class Section {
+ public:
+  enum class BuildMode : uint8_t { Foreground, BackgroundPrefetch };
+
+ private:
   std::shared_ptr<Epub> epub;
   const int spineIndex;
   GfxRenderer& renderer;
@@ -32,6 +36,7 @@ class Section {
     uint16_t listItemIndex;
     uint32_t visibleTextOffset;
   };
+
   // Held only while an incremental build is in progress (see startBuild). Carries the
   // live parser plus the strings it references (the parser stores them by reference)
   // and the in-RAM page-offset table. The table is a deque so it grows in small chunks: a vector
@@ -46,6 +51,7 @@ class Section {
     std::string htmlPath;
     std::string tmpHtmlPath;
     bool reusedHtml = false;
+    BuildMode mode = BuildMode::Foreground;
     CssParser* cssParser = nullptr;
     // HTML byte progress, for estimating the section's total page count while it's still building.
     uint32_t bytesConsumed = 0;
@@ -99,8 +105,10 @@ class Section {
   //   if (!startBuild(...)) fail;
   //   each tick: buildSomeMore(N); render up to pageCount; when isBuildComplete() stop.
   bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr,
-                  bool allowFrameBufferLoan = true);
-  void setAllowFrameBufferLoan(bool allow);
+                  BuildMode mode = BuildMode::Foreground);
+  // Promote an in-progress BackgroundPrefetch build to Foreground so image probes
+  // may borrow the framebuffer and completion reclaims SD font caches.
+  void promoteToForeground();
   int getSpineIndex() const { return spineIndex; }
   // Lay out up to maxPages more pages (maxPages <= 0 = build to completion). Returns
   // false on error (the build is abandoned). Sets isBuildComplete() when finished.

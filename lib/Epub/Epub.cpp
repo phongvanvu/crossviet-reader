@@ -25,6 +25,15 @@
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
 
+namespace {
+void removeSectionsCacheIfPresent(const std::string& cachePath) {
+  const std::string sectionsDir = cachePath + "/sections";
+  if (Storage.exists(sectionsDir.c_str())) {
+    Storage.removeDir(sectionsDir.c_str());
+  }
+}
+}  // namespace
+
 Epub::Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
   cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
 }
@@ -119,8 +128,16 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   // try extracting the image reference from the guide's cover page XHTML
   if (bookMetadata.coverItemHref.empty() && !opfParser.guideCoverPageHref.empty()) {
     LOG_DBG("EBP", "No cover from metadata, trying guide cover page: %s", opfParser.guideCoverPageHref.c_str());
-    size_t coverPageSize;
-    uint8_t* coverPageData = readItemContentsToBytes(opfParser.guideCoverPageHref, &coverPageSize, true);
+    size_t coverPageSize = 0;
+    uint8_t* coverPageData = nullptr;
+    if (sharedZip) {
+      if (normalizeLookup) sharedZip->restartMemberSearch();
+      const std::string coverPagePath =
+          normalizeLookup ? FsHelpers::normalisePath(opfParser.guideCoverPageHref) : opfParser.guideCoverPageHref;
+      coverPageData = sharedZip->readFileToMemory(coverPagePath.c_str(), &coverPageSize, true);
+    } else {
+      coverPageData = readItemContentsToBytes(opfParser.guideCoverPageHref, &coverPageSize, true);
+    }
     if (coverPageData) {
       const std::string coverPageHtml(reinterpret_cast<char*>(coverPageData), coverPageSize);
       free(coverPageData);
@@ -557,7 +574,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
             (cssParseResult == CssParser::ParseResult::Partial && cacheStatus != CssParser::CacheStatus::Partial);
         if (cssCacheChanged) {
           // The CSS cache changed, so section caches must use the same rule set.
-          Storage.removeDir((cachePath + "/sections").c_str());
+          removeSectionsCacheIfPresent(cachePath);
         }
       }
     }
@@ -671,7 +688,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
       // Parse CSS before reloading book.bin to leave more heap for CSS rule-table growth.
       bookMetadataCache.reset();
       if (parseCssFiles(cssParser->inspectCache(), sharedZip) != CssParser::ParseResult::Error) {
-        Storage.removeDir((cachePath + "/sections").c_str());
+        removeSectionsCacheIfPresent(cachePath);
       }
     }
   }
